@@ -1,0 +1,194 @@
+---
+description: TAPAS UX principles and interaction guidelines for a fast, keyboard-first terminal experience
+alwaysApply: true
+---
+
+# TAPAS UX Principles and Interaction Guidelines
+
+Design TAPAS as a modern, beautiful "htop for ports": fast, focused, calm, keyboard-first, and predictable.
+
+## UX Philosophy
+
+- TAPAS must feel like a serious developer tool.
+- Prioritize speed, clarity, and confidence over novelty.
+- Keep personality subtle: slightly playful, mostly professional.
+- No emojis in TAPAS app UI copy.
+
+## Core UX Principles
+
+### Clarity Over Density
+
+Show only high-value information by default:
+- Port
+- Process
+- Project (working directory)
+- Uptime
+- Protocol (when useful)
+
+Avoid visual noise, decorative clutter, and unnecessary borders.
+
+### Keyboard Is Primary
+
+Every core interaction must be available without a mouse.
+
+Required keys:
+- `Up` / `Down` / `Right`: navigate
+- `Enter`: inspect details
+- `k`: kill selected process/port
+- `r`: refresh
+- `/`: search/filter
+- `s`: sort
+- `q`: quit (and close modals where appropriate)
+
+Avoid multi-key combinations unless absolutely necessary.
+
+### Speed Is UX
+
+- Refresh should feel instant.
+- Do not block the UI during data updates.
+- Avoid flicker and full redraws unless required.
+- If refresh exceeds ~300ms, show a subtle loading indicator.
+
+### Forgiving but Safe
+
+Destructive actions must:
+- require explicit confirmation,
+- clearly state what will happen,
+- never be silent.
+
+Never auto-kill. Never hide consequences.
+
+Example confirmation copy:
+`Kill port 3000 (node)? [y] Confirm [n] Cancel`
+
+### Visual Hierarchy and Color
+
+Color must communicate state, not decoration:
+- selected row: highlighted,
+- long-running ports (>24h): soft red,
+- common dev ports (3000-3005): blue,
+- common databases (for example 5432, 6379): purple,
+- system processes: muted.
+
+Color cannot be the only signal; always support symbols/text cues.
+Choose styles that remain legible in dark terminals.
+
+### Stability Above Features
+
+If a feature adds instability or avoidable complexity, remove or defer it.
+TAPAS should always feel rock-solid.
+
+## Interaction Model
+
+### Default Screen
+
+Use a table view of listening ports with persistent selection visibility.
+Include a bottom status/help bar with core shortcuts, for example:
+`[k] Kill   [Enter] Details   [/] Search   [r] Refresh   [q] Quit`
+
+### Details Modal (`Enter`)
+
+Display:
+- Port
+- PID
+- Process name
+- Full command
+- Working directory
+- Start time
+- Protocol
+
+Rules:
+- `Esc` or `q` closes modal.
+- Modal overlays clearly without unnecessary background redraw.
+- Preserve table selection state when modal closes.
+
+### Kill Flow (`k`)
+
+Required sequence:
+1. User presses `k`.
+2. Confirmation modal appears.
+3. User confirms with `y`.
+4. Show success or error feedback.
+5. Refresh table automatically.
+
+Feedback copy style:
+- Success: `Port 3000 terminated.`
+- Error: `Failed to kill port 3000 (permission denied).`
+
+### Search Mode (`/`)
+
+- Input appears at bottom.
+- Filtering updates in real time.
+- `Esc` clears/cancels search.
+- Interaction should feel immediate.
+
+### Sorting (`s`)
+
+Cycle sort key through:
+- Port
+- Uptime
+- Process
+
+Show the active sort indicator in the table header.
+
+## Layout Guidelines
+
+Structure:
+- title/header,
+- main table,
+- bottom status/help bar.
+
+Prefer whitespace and alignment over heavy border usage.
+
+Responsive behavior for narrow terminals:
+1. Keep `Port`.
+2. Keep `Process`.
+3. Keep `Uptime`.
+4. Truncate `Project` first.
+
+Never break layout; truncate gracefully using `...`.
+
+## Performance Guidelines
+
+- Use manual refresh by default.
+- Avoid continuous polling as the baseline behavior.
+- Optional watch mode can be added later.
+- No background daemon.
+- Keep memory usage minimal.
+
+## Error Handling UX
+
+Errors must be:
+- visible,
+- understandable,
+- non-fatal to UI responsiveness.
+
+Handle common cases clearly:
+- permission denied,
+- command parsing failed,
+- no ports found.
+
+Preferred empty state copy:
+`No listening ports found. Time to cook something.`
+
+## UX Non-Goals
+
+- No mouse-first interaction.
+- No complex nested menus.
+- No maze-like multi-screen navigation.
+- No heavy animations.
+
+Keep UX sharp and direct.
+
+## Definition of Great UX for TAPAS
+
+A developer should be able to:
+- instantly understand what is running,
+- free a port in under 3 seconds,
+- avoid confusion,
+- use the tool without reading documentation first.
+
+## Final Rule
+
+If an interaction makes TAPAS slower, heavier, or more complicated, remove it.
+TAPAS is a small plate, not a buffet.

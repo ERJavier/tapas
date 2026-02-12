@@ -1,0 +1,48 @@
+---
+description: TAPAS product vision, architecture, and implementation guardrails
+alwaysApply: true
+---
+
+# TAPAS Development Rule
+
+Build TAPAS as **"a modern, beautiful htop for ports"**: small, sharp, terminal-native, and delightful.
+
+## Product Priorities
+
+- Prioritize clarity, speed, and keyboard-driven UX over feature breadth.
+- Keep interactions responsive; avoid UI flicker and blocking refresh paths.
+- Favor minimal UI and clear information density over decorative complexity.
+- Target macOS and Linux only (no first-party Windows scope right now).
+
+## Architecture Guardrails
+
+- Keep system logic and UI logic separated.
+- UI code must not execute OS commands directly.
+- Implement port/process behavior in `internal/ports/`; render and input handling in `internal/ui/`.
+- Preserve a stable core model shaped around port metadata (port, pid, process, protocol, uptime/start time, working dir).
+
+## Delivery Sequence (Roadmap Discipline)
+
+- Build in phases:
+  - v0.1 MVP: list listening ports, navigate, kill, refresh, quit.
+  - v0.2 UX: sort, filter, detail/confirm modals, color semantics.
+  - v1.0 Smart detection: framework badges, Docker detection, watch mode.
+- Do not jump to phase-3 features until MVP stability is solid on macOS and Linux.
+
+## Non-Goals Enforcement
+
+Reject or defer changes that introduce:
+- cloud integration
+- telemetry
+- background daemons
+- auto-kill scripts
+- broad Windows-specific implementation work
+
+## Decision Filter
+
+When proposing or implementing a change, prefer options that:
+1. improve developer workflow clarity
+2. keep TAPAS lightweight
+3. maintain clean separations in architecture
+
+If a feature does not improve clarity or developer workflow, it does not belong.
