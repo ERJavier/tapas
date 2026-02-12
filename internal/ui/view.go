@@ -12,12 +12,13 @@ import (
 const (
 	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [q] Quit"
 
-	// Column layout: keep Port, Process, Uptime; truncate Project first (UX narrow-terminal rule).
-	colPort    = 8
-	colProcess = 12
-	colUptime  = 12
-	colGaps    = 3   // spaces between columns
-	minTableW  = colPort + colProcess + colUptime + colGaps // 35; project gets the rest
+	// Column layout: keep Port, Protocol, Process, Uptime; truncate Project first (UX narrow-terminal rule).
+	colPort     = 8
+	colProtocol = 5   // TCP / UDP
+	colProcess  = 12
+	colUptime   = 12
+	colGaps     = 4   // spaces between 5 columns
+	minTableW   = colPort + colProtocol + colProcess + colUptime + colGaps // 41; project gets the rest
 )
 
 var (
@@ -112,7 +113,7 @@ func (m Model) viewTable() string {
 	}
 
 	// Table header with sort indicator
-	portHdr, processHdr, projectHdr, uptimeHdr := "PORT", "PROCESS", "PROJECT", "UPTIME"
+	portHdr, protoHdr, processHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "PROJECT", "UPTIME"
 	switch m.sortKey {
 	case SortByPort:
 		portHdr = "PORT \u2191"
@@ -121,7 +122,7 @@ func (m Model) viewTable() string {
 	case SortByProcess:
 		processHdr = "PROCESS \u2191"
 	}
-	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s", colPort, truncate(portHdr, colPort), colProcess, truncate(processHdr, colProcess), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
+	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
 	b.WriteString(header + "\n")
 
 	// Rows (from display list, with color semantics)
@@ -168,7 +169,11 @@ func rowStyle(p *ports.Port) lipgloss.Style {
 func rowLine(p *ports.Port, projectCol int) string {
 	uptime := formatUptime(p.Uptime())
 	project := truncate(p.Project(), projectCol)
-	return fmt.Sprintf("%-*d %-*s %-*s %-*s", colPort, p.PortNum, colProcess, truncate(p.Process, colProcess), projectCol, project, colUptime, uptime)
+	proto := truncate(strings.ToUpper(p.Protocol), colProtocol)
+	if proto == "" {
+		proto = "—"
+	}
+	return fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s", colPort, p.PortNum, colProtocol, proto, colProcess, truncate(p.Process, colProcess), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {
