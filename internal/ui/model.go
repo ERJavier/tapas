@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/javiercepeda/tapas/internal/ports"
@@ -25,6 +26,9 @@ type killDoneMsg struct {
 	ok    bool
 	error string
 }
+
+// tickMsg is sent when watch-mode tick fires; triggers one refresh (efficient: one tick at a time).
+type tickMsg struct{}
 
 // SortKey is the current table sort key.
 type SortKey int
@@ -68,14 +72,19 @@ type Model struct {
 	killTarget      *ports.Port
 	killResult      string // error message after failed kill
 	successMsg      string // e.g. "Port 3000 terminated."
+
+	// v1.0 Watch mode: auto-refresh every WatchInterval (no heavy polling; one tick in flight).
+	WatchEnabled  bool
+	WatchInterval time.Duration
 }
 
 // NewModel returns an initial model. Caller must provide a Lister (e.g. ports.DefaultLister()).
 func NewModel(lister Lister) Model {
 	return Model{
-		lister: lister,
-		ports:  nil,
-		selected: 0,
+		lister:        lister,
+		ports:         nil,
+		selected:      0,
+		WatchInterval: 5 * time.Second,
 	}
 }
 
@@ -90,6 +99,13 @@ func (m Model) refreshCmd() tea.Cmd {
 		ports, err := m.lister.List()
 		return refreshDoneMsg{ports: ports, err: err}
 	}
+}
+
+// scheduleTick returns a Cmd that sends tickMsg after WatchInterval (for watch mode).
+func (m Model) scheduleTick() tea.Cmd {
+	return tea.Tick(m.WatchInterval, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
 }
 
 // displayPorts returns filtered and sorted ports for display. Selection index applies to this slice.
@@ -122,6 +138,9 @@ func portMatches(p ports.Port, q string) bool {
 		return true
 	}
 	if strings.Contains(strings.ToLower(p.WorkingDir), q) {
+		return true
+	}
+	if p.Framework != "" && strings.Contains(strings.ToLower(p.Framework), q) {
 		return true
 	}
 	return false
@@ -263,6 +282,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortKey = SortKey((int(m.sortKey) + 1) % 3)
 			m.clampSelected()
 			return m, nil
+		case "w", "W":
+			m.WatchEnabled = !m.WatchEnabled
+			if m.WatchEnabled {
+				return m, m.scheduleTick()
+			}
+			return m, nil
 		case "/":
 			m.searchMode = true
 			return m, nil
@@ -270,6 +295,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+	case tickMsg:
+		if m.WatchEnabled {
+			return m, tea.Batch(m.refreshCmd(), m.scheduleTick())
+		}
 		return m, nil
 	case refreshDoneMsg:
 		m.err = ""

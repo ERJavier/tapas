@@ -11,6 +11,10 @@ type Port struct {
 	StartTime  time.Time
 	WorkingDir string
 	Command    string
+
+	// v1.0 Smart Detection
+	Framework string // e.g. "Next.js", "Vite", "Rails", "Django", "Node", ""
+	InDocker  bool   // process is running inside a Docker/containerd container
 }
 
 // Uptime returns the duration since StartTime. If StartTime is zero, returns 0.

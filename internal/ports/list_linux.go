@@ -60,6 +60,8 @@ func parseSS(out []byte) ([]Port, error) {
 			StartTime:  startTime,
 			WorkingDir: workingDir,
 			Command:    command,
+			Framework:  DetectFramework(workingDir, command, process),
+			InDocker:   isDocker(pid),
 		})
 	}
 	return list, sc.Err()
