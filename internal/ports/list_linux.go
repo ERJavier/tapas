@@ -29,6 +29,7 @@ func (l *linuxLister) List() ([]Port, error) {
 		return nil, err
 	}
 	EnrichDocker(&list)
+	EnrichConnectionCounts(&list)
 	return list, nil
 }
 
@@ -48,8 +49,8 @@ func parseSS(out []byte) ([]Port, error) {
 		if fields[0] != "LISTEN" {
 			continue
 		}
-		addr := fields[3]
-		port, ok := portFromSSAddr(addr)
+		addrStr := fields[3]
+		port, ok := portFromSSAddr(addrStr)
 		if !ok {
 			continue
 		}
@@ -57,16 +58,22 @@ func parseSS(out []byte) ([]Port, error) {
 		startTime, _ := processStartTimeLinux(pid)
 		workingDir := getWorkingDirLinux(pid)
 		command := getCommandLinux(pid)
+		bindAddr := bindFromSSAddr(addrStr)
+		if bindAddr == "*" {
+			bindAddr = "0.0.0.0"
+		}
 		list = append(list, Port{
-			PortNum:    uint16(port),
-			PID:        pid,
-			Process:    process,
-			Protocol:   "tcp",
-			StartTime:  startTime,
-			WorkingDir: workingDir,
-			Command:    command,
-			Framework:  DetectFramework(workingDir, command, process),
-			InDocker:   isDocker(pid),
+			PortNum:           uint16(port),
+			PID:               pid,
+			Process:           process,
+			Protocol:          "tcp",
+			StartTime:         startTime,
+			WorkingDir:        workingDir,
+			Command:           command,
+			Framework:         DetectFramework(workingDir, command, process),
+			InDocker:          isDocker(pid),
+			BindAddress:       bindAddr,
+			ProjectDisplayName: ProjectDisplayName(workingDir),
 		})
 	}
 	return list, sc.Err()
@@ -82,6 +89,14 @@ func portFromSSAddr(addr string) (int, bool) {
 		return 0, false
 	}
 	return port, true
+}
+
+func bindFromSSAddr(addr string) string {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(addr[:i])
 }
 
 func pidAndProcessFromSS(line string) (int, string) {

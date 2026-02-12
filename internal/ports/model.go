@@ -19,6 +19,15 @@ type Port struct {
 	// Docker awareness: from docker ps port mapping (host port -> container)
 	DockerContainerName string // e.g. "my-api-container"
 	DockerImage         string // e.g. "postgres:15"
+
+	// Bind address: what the port is listening on (127.0.0.1 = local, 0.0.0.0 = all interfaces)
+	BindAddress string // e.g. "127.0.0.1", "0.0.0.0", or specific IP
+
+	// Active connection count (established connections to this port). 0 if unknown or none.
+	ConnectionCount int
+
+	// Project display name: from package.json "name", .git repo name, or empty (use Project()).
+	ProjectDisplayName string
 }
 
 // Uptime returns the duration since StartTime. If StartTime is zero, returns 0.
