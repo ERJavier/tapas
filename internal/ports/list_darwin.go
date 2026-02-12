@@ -68,19 +68,26 @@ func parseLsof(out []byte) ([]Port, error) {
 }
 
 func portFromLsofName(name string) (int, bool) {
-	// *:3000 (LISTEN) or [::]:3000 (LISTEN)
+	// *:3000 (LISTEN) or *:7000 (no paren when from single field)
 	i := strings.Index(name, ":")
 	if i < 0 {
 		return 0, false
 	}
-	j := strings.Index(name[i+1:], " ")
+	rest := name[i+1:]
+	j := strings.Index(rest, " ")
 	if j < 0 {
-		j = strings.Index(name[i+1:], ")")
+		j = strings.Index(rest, ")")
 	}
-	if j < 0 {
+	var s string
+	if j >= 0 {
+		s = rest[:j]
+	} else {
+		s = rest
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return 0, false
 	}
-	s := name[i+1 : i+1+j]
 	port, err := strconv.Atoi(s)
 	if err != nil {
 		return 0, false

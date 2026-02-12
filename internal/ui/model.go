@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/javiercepeda/tapas/internal/ports"
@@ -24,6 +26,28 @@ type killDoneMsg struct {
 	error string
 }
 
+// SortKey is the current table sort key.
+type SortKey int
+
+const (
+	SortByPort   SortKey = iota
+	SortByUptime
+	SortByProcess
+)
+
+func (k SortKey) String() string {
+	switch k {
+	case SortByPort:
+		return "Port"
+	case SortByUptime:
+		return "Uptime"
+	case SortByProcess:
+		return "Process"
+	default:
+		return "Port"
+	}
+}
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	ports     []ports.Port
@@ -32,6 +56,11 @@ type Model struct {
 	err       string
 	width     int
 	height    int
+
+	// v0.2: sort and filter
+	sortKey     SortKey
+	searchMode  bool
+	searchQuery string
 
 	// Modals (MVP: details and kill confirm)
 	showDetails     bool
@@ -63,18 +92,80 @@ func (m Model) refreshCmd() tea.Cmd {
 	}
 }
 
-// SelectedPort returns the currently selected port, or nil if none.
+// displayPorts returns filtered and sorted ports for display. Selection index applies to this slice.
+func (m *Model) displayPorts() []ports.Port {
+	return filterAndSort(m.ports, m.searchQuery, m.sortKey)
+}
+
+func filterAndSort(list []ports.Port, query string, sortKey SortKey) []ports.Port {
+	var out []ports.Port
+	q := strings.TrimSpace(strings.ToLower(query))
+	for _, p := range list {
+		if q == "" || portMatches(p, q) {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return lessPort(out[i], out[j], sortKey)
+	})
+	return out
+}
+
+func portMatches(p ports.Port, q string) bool {
+	if strings.Contains(strings.ToLower(fmt.Sprint(p.PortNum)), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(p.Process), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(p.Project()), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(p.WorkingDir), q) {
+		return true
+	}
+	return false
+}
+
+func lessPort(a, b ports.Port, sortKey SortKey) bool {
+	switch sortKey {
+	case SortByPort:
+		return a.PortNum < b.PortNum
+	case SortByUptime:
+		ua, ub := a.Uptime(), b.Uptime()
+		return ua < ub
+	case SortByProcess:
+		return strings.ToLower(a.Process) < strings.ToLower(b.Process)
+	default:
+		return a.PortNum < b.PortNum
+	}
+}
+
+// SelectedPort returns the currently selected port, or nil if none (from display list).
 func (m *Model) SelectedPort() *ports.Port {
-	if len(m.ports) == 0 {
+	disp := m.displayPorts()
+	if len(disp) == 0 {
 		return nil
 	}
 	if m.selected < 0 {
 		m.selected = 0
 	}
-	if m.selected >= len(m.ports) {
-		m.selected = len(m.ports) - 1
+	if m.selected >= len(disp) {
+		m.selected = len(disp) - 1
 	}
-	return &m.ports[m.selected]
+	p := disp[m.selected]
+	return &p
+}
+
+// clampSelected ensures selected is within display list length.
+func (m *Model) clampSelected() {
+	disp := m.displayPorts()
+	if m.selected >= len(disp) {
+		m.selected = max(0, len(disp)-1)
+	}
+	if m.selected < 0 {
+		m.selected = 0
+	}
 }
 
 // Update handles messages. UI does not execute OS commands; kill is done via ports.Kill in response to confirm.
@@ -112,6 +203,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// Search mode: only Esc and backspace and runes
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchQuery = ""
+				return m, nil
+			case "backspace":
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				}
+				m.clampSelected()
+				return m, nil
+			}
+			if len(msg.String()) == 1 {
+				r := msg.String()[0]
+				if r >= 32 && r < 127 {
+					m.searchQuery += msg.String()
+					m.clampSelected()
+					return m, nil
+				}
+			}
+			return m, nil
+		}
 		m.successMsg = "" // clear success message on any key
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -121,12 +236,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.successMsg = ""
 			return m, m.refreshCmd()
 		case "up":
-			if m.selected > 0 {
+			disp := m.displayPorts()
+			if m.selected > 0 && len(disp) > 0 {
 				m.selected--
 			}
 			return m, nil
 		case "down", "j", "right":
-			if m.selected < len(m.ports)-1 {
+			disp := m.displayPorts()
+			if m.selected < len(disp)-1 {
 				m.selected++
 			}
 			return m, nil
@@ -142,6 +259,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.killTarget = &dup
 			}
 			return m, nil
+		case "s", "S":
+			m.sortKey = SortKey((int(m.sortKey) + 1) % 3)
+			m.clampSelected()
+			return m, nil
+		case "/":
+			m.searchMode = true
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -155,9 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ports = msg.ports
-		if m.selected >= len(m.ports) {
-			m.selected = max(0, len(m.ports)-1)
-		}
+		m.clampSelected()
 		return m, nil
 	}
 	return m, nil

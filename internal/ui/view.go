@@ -10,20 +10,25 @@ import (
 )
 
 const (
-	statusBar = "[k] Kill   [Enter] Details   [r] Refresh   [q] Quit"
+	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [q] Quit"
 )
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true)
-	headerStyle  = lipgloss.NewStyle().Bold(true)
+	titleStyle    = lipgloss.NewStyle().Bold(true)
+	headerStyle   = lipgloss.NewStyle().Bold(true)
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	modalStyle   = lipgloss.NewStyle().
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	modalStyle    = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
 			Padding(1, 2)
+	// v0.2 color semantics (state, not decoration)
+	longRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))   // soft red >24h
+	devPortStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))   // blue 3000-3005
+	dbPortStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))   // purple 5432, 6379
+	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))   // system / privileged
 )
 
 // View renders the current state. Never executes OS commands.
@@ -79,27 +84,67 @@ func (m Model) viewTable() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.successMsg) + "\n\n")
 	}
 
-	if len(m.ports) == 0 && m.err == "" {
+	disp := m.displayPorts()
+	if len(disp) == 0 && m.err == "" {
 		b.WriteString(dimStyle.Render("No listening ports found. Time to cook something.") + "\n")
+		if m.searchQuery != "" {
+			b.WriteString(dimStyle.Render("No matches for \"" + m.searchQuery + "\".") + "\n")
+		}
 		b.WriteString("\n" + statusStyle.Render(statusBar))
 		return b.String()
 	}
 
-	// Table header
-	header := headerStyle.Render(fmt.Sprintf("%-6s %-12s %-10s %-12s", "PORT", "PROCESS", "PROJECT", "UPTIME"))
+	// Table header with sort indicator
+	portHdr, processHdr, projectHdr, uptimeHdr := "PORT", "PROCESS", "PROJECT", "UPTIME"
+	switch m.sortKey {
+	case SortByPort:
+		portHdr = "PORT \u2191"
+	case SortByUptime:
+		uptimeHdr = "UPTIME \u2191"
+	case SortByProcess:
+		processHdr = "PROCESS \u2191"
+	}
+	header := headerStyle.Render(fmt.Sprintf("%-8s %-12s %-10s %-12s", portHdr, processHdr, projectHdr, uptimeHdr))
 	b.WriteString(header + "\n")
 
-	// Rows
-	for i, p := range m.ports {
+	// Rows (from display list, with color semantics)
+	for i, p := range disp {
 		row := rowLine(&p)
 		if i == m.selected {
 			row = selectedStyle.Render(row)
+		} else {
+			row = rowStyle(&p).Render(row)
 		}
 		b.WriteString(row + "\n")
 	}
 
-	b.WriteString("\n" + statusStyle.Render(statusBar))
+	// Status bar and search prompt
+	b.WriteString("\n")
+	if m.searchMode {
+		b.WriteString(statusStyle.Render("/ ") + statusStyle.Render(m.searchQuery) + dimStyle.Render("_") + "\n")
+		b.WriteString(dimStyle.Render("Esc to clear search") + "\n")
+	} else {
+		b.WriteString(statusStyle.Render(statusBar))
+	}
 	return b.String()
+}
+
+// rowStyle returns the semantic style for a row (long-run red, dev blue, DB purple, system muted).
+func rowStyle(p *ports.Port) lipgloss.Style {
+	const longRunThreshold = 24 * time.Hour
+	if p.Uptime() >= longRunThreshold {
+		return longRunStyle
+	}
+	switch p.PortNum {
+	case 3000, 3001, 3002, 3003, 3004, 3005:
+		return devPortStyle
+	case 5432, 6379:
+		return dbPortStyle
+	}
+	if p.PortNum < 1024 {
+		return mutedStyle
+	}
+	return lipgloss.NewStyle() // default
 }
 
 func rowLine(p *ports.Port) string {
