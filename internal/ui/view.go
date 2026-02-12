@@ -13,15 +13,17 @@ import (
 const (
 	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [w] Watch   [q] Quit"
 
-	// Column layout: symbol + Port, Protocol, Process, App (framework badge), Uptime; truncate Project first.
+	// Column layout: symbol + Port, Protocol, Process, App, Bind, Conn (connection count), Uptime; truncate Project first.
 	colSymbol   = 1
 	colPort     = 8
 	colProtocol = 5
-	colProcess  = 45 // e.g. "Docker → my-api-container (postgres:15)" — project column truncates first on narrow terminals
-	colApp      = 10  // framework badge + Docker indicator
+	colProcess  = 45
+	colApp      = 10
+	colBind     = 6
+	colConn     = 5  // connection count or —
 	colUptime   = 12
 	colGaps     = 4
-	minTableW   = colSymbol + colPort + colProtocol + colProcess + colApp + colUptime + colGaps
+	minTableW   = colSymbol + colPort + colProtocol + colProcess + colApp + colBind + colConn + colUptime + colGaps
 )
 
 var (
@@ -90,6 +92,12 @@ func (m Model) viewDetails() string {
 	} else if p.InDocker {
 		lines = append(lines, "Container:  Docker")
 	}
+	if p.BindAddress != "" {
+		lines = append(lines, "Bind:      "+bindLabel(p.BindAddress))
+	}
+	if p.ConnectionCount >= 0 {
+		lines = append(lines, fmt.Sprintf("Connections: %d", p.ConnectionCount))
+	}
 	if !p.StartTime.IsZero() {
 		lines = append(lines, "Start time: "+p.StartTime.Format("2006-01-02 15:04:05"))
 	}
@@ -134,7 +142,7 @@ func (m Model) viewTable() string {
 	}
 
 	// Table header with sort indicator
-	portHdr, protoHdr, processHdr, appHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "APP", "PROJECT", "UPTIME"
+	portHdr, protoHdr, processHdr, appHdr, bindHdr, connHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "APP", "BIND", "CONN", "PROJECT", "UPTIME"
 	switch m.sortKey {
 	case SortByPort:
 		portHdr = "PORT \u2191"
@@ -143,7 +151,7 @@ func (m Model) viewTable() string {
 	case SortByProcess:
 		processHdr = "PROCESS \u2191"
 	}
-	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, " ", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), colApp, truncate(appHdr, colApp), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
+	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, " ", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), colApp, truncate(appHdr, colApp), colBind, truncate(bindHdr, colBind), colConn, truncate(connHdr, colConn), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
 	b.WriteString(header + "\n")
 
 	// Rows (from display list, with color semantics + symbol cues)
@@ -236,7 +244,54 @@ func rowStyleForKind(k rowKind) lipgloss.Style {
 	}
 }
 
-// processLabel returns the process column text: "Docker → container (image)", "Framework (process)", or process name.
+// projectLabel returns the PROJECT column text: "dili (Next.js)" or for Docker "pulso-api (Docker)".
+func projectLabel(p *ports.Port) string {
+	base := ""
+	if p.DockerContainerName != "" {
+		// Docker: use container name as project context (host cwd is meaningless)
+		base = p.DockerContainerName
+	} else {
+		base = p.ProjectDisplayName
+		if base == "" {
+			base = p.Project()
+		}
+	}
+	if base == "" || base == "/" {
+		base = "—"
+	}
+	if base == "—" {
+		return base
+	}
+	if p.DockerContainerName != "" {
+		return base + " (Docker)"
+	}
+	if p.Framework != "" {
+		return base + " (" + p.Framework + ")"
+	}
+	return base
+}
+
+// connLabel returns the connection count for the CONN column ("0", "4", etc.).
+func connLabel(count int) string {
+	if count <= 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d", count)
+}
+
+// bindLabel returns LOCAL, PUBLIC, or the bind address for security awareness.
+func bindLabel(addr string) string {
+	switch addr {
+	case "127.0.0.1", "::1":
+		return "LOCAL"
+	case "0.0.0.0", "*", "":
+		return "PUBLIC"
+	default:
+		return addr
+	}
+}
+
+// processLabel returns the process column text: Docker, "PostgreSQL (local)", "Framework (process)", or process name.
 func processLabel(p *ports.Port) string {
 	if p.DockerContainerName != "" {
 		s := "Docker → " + p.DockerContainerName
@@ -244,6 +299,9 @@ func processLabel(p *ports.Port) string {
 			s += " (" + p.DockerImage + ")"
 		}
 		return s
+	}
+	if db := ports.DatabaseProductName(p.PortNum); db != "" {
+		return db + " (" + bindLabel(p.BindAddress) + ")"
 	}
 	if p.Framework != "" {
 		if p.Process != "" && p.Process != "—" {
@@ -279,7 +337,7 @@ func appBadge(p *ports.Port) string {
 // rowLine formats one table row. symbol is the row-kind cue (1 char). projectCol is the width for the project column.
 func rowLine(p *ports.Port, projectCol int, symbol string) string {
 	uptime := formatUptime(p.Uptime())
-	project := truncate(p.Project(), projectCol)
+	project := truncate(projectLabel(p), projectCol)
 	proto := truncate(strings.ToUpper(p.Protocol), colProtocol)
 	if proto == "" {
 		proto = "—"
@@ -289,7 +347,7 @@ func rowLine(p *ports.Port, projectCol int, symbol string) string {
 	if utf8.RuneCountInString(sym) > 1 {
 		sym = string([]rune(symbol)[0])
 	}
-	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), projectCol, project, colUptime, uptime)
+	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), colBind, truncate(bindLabel(p.BindAddress), colBind), colConn, connLabel(p.ConnectionCount), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {

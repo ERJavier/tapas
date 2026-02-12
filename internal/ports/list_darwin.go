@@ -28,6 +28,7 @@ func (d *darwinLister) List() ([]Port, error) {
 		return nil, err
 	}
 	EnrichDocker(&list)
+	EnrichConnectionCounts(&list)
 	return list, nil
 }
 
@@ -49,7 +50,7 @@ func parseLsof(out []byte) ([]Port, error) {
 			continue
 		}
 		name := fields[8]
-		port, ok := portFromLsofName(name)
+		addr, port, ok := addrPortFromLsofName(name)
 		if !ok {
 			continue
 		}
@@ -62,47 +63,53 @@ func parseLsof(out []byte) ([]Port, error) {
 		workingDir := getWorkingDir(pid)
 		command := getCommand(pid)
 		process := fields[0]
+		bindAddr := addr
+		if bindAddr == "*" {
+			bindAddr = "0.0.0.0"
+		}
 		list = append(list, Port{
-			PortNum:    uint16(port),
-			PID:        pid,
-			Process:    process,
-			Protocol:   "tcp",
-			StartTime:  startTime,
-			WorkingDir: workingDir,
-			Command:    command,
-			Framework:  DetectFramework(workingDir, command, process),
-			InDocker:   isDocker(pid),
+			PortNum:           uint16(port),
+			PID:               pid,
+			Process:           process,
+			Protocol:          "tcp",
+			StartTime:         startTime,
+			WorkingDir:        workingDir,
+			Command:           command,
+			Framework:         DetectFramework(workingDir, command, process),
+			InDocker:          isDocker(pid),
+			BindAddress:        bindAddr,
+			ProjectDisplayName: ProjectDisplayName(workingDir),
 		})
 	}
 	return list, sc.Err()
 }
 
-func portFromLsofName(name string) (int, bool) {
-	// *:3000 (LISTEN) or *:7000 (no paren when from single field)
+// addrPortFromLsofName parses NAME like "*:3000 (LISTEN)" or "127.0.0.1:3000 (LISTEN)". Returns (address, port, ok).
+func addrPortFromLsofName(name string) (addr string, port int, ok bool) {
 	i := strings.Index(name, ":")
 	if i < 0 {
-		return 0, false
+		return "", 0, false
 	}
+	addr = strings.TrimSpace(name[:i])
 	rest := name[i+1:]
 	j := strings.Index(rest, " ")
 	if j < 0 {
 		j = strings.Index(rest, ")")
 	}
-	var s string
+	var portStr string
 	if j >= 0 {
-		s = rest[:j]
+		portStr = strings.TrimSpace(rest[:j])
 	} else {
-		s = rest
+		portStr = strings.TrimSpace(rest)
 	}
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, false
+	if portStr == "" {
+		return "", 0, false
 	}
-	port, err := strconv.Atoi(s)
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return 0, false
+		return "", 0, false
 	}
-	return port, true
+	return addr, port, true
 }
 
 func processStartTime(pid int) (time.Time, error) {

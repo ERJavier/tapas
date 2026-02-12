@@ -137,6 +137,9 @@ func portMatches(p ports.Port, q string) bool {
 	if strings.Contains(strings.ToLower(p.Project()), q) {
 		return true
 	}
+	if p.ProjectDisplayName != "" && strings.Contains(strings.ToLower(p.ProjectDisplayName), q) {
+		return true
+	}
 	if strings.Contains(strings.ToLower(p.WorkingDir), q) {
 		return true
 	}
