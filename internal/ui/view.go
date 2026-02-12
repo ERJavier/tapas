@@ -4,39 +4,43 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/javiercepeda/tapas/internal/ports"
 )
 
 const (
-	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [q] Quit"
+	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [w] Watch   [q] Quit"
 
-	// Column layout: keep Port, Protocol, Process, Uptime; truncate Project first (UX narrow-terminal rule).
+	// Column layout: symbol + Port, Protocol, Process, App (framework badge), Uptime; truncate Project first.
+	colSymbol   = 1
 	colPort     = 8
-	colProtocol = 5   // TCP / UDP
+	colProtocol = 5
 	colProcess  = 12
+	colApp      = 10  // framework badge + Docker indicator
 	colUptime   = 12
-	colGaps     = 4   // spaces between 5 columns
-	minTableW   = colPort + colProtocol + colProcess + colUptime + colGaps // 41; project gets the rest
+	colGaps     = 4
+	minTableW   = colSymbol + colPort + colProtocol + colProcess + colApp + colUptime + colGaps
 )
 
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	headerStyle   = lipgloss.NewStyle().Bold(true)
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	modalStyle    = lipgloss.NewStyle().
+	titleStyle   = lipgloss.NewStyle().Bold(true)
+	headerStyle  = lipgloss.NewStyle().Bold(true)
+	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	modalStyle   = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
 			Padding(1, 2)
-	// v0.2 color semantics (state, not decoration)
-	longRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))   // soft red >24h
-	devPortStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))   // blue 3000-3005
-	dbPortStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))   // purple 5432, 6379
-	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))   // system / privileged
+	// Selected row: dark background + bright text (ANSI 16-color so all terminals show highlight).
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("8")).Foreground(lipgloss.Color("15"))
+	// v0.2 color semantics: ANSI 16-color codes so blue, purple, muted show in 16-color terminals.
+	longRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red >24h
+	devPortStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))  // blue 3000-3005
+	dbPortStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // magenta/purple 5432, 6379, etc.
+	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // system / privileged (muted)
 )
 
 // View renders the current state. Never executes OS commands.
@@ -73,6 +77,12 @@ func (m Model) viewDetails() string {
 		"Working dir: " + p.WorkingDir,
 		"Command:   " + truncate(p.Command, 60),
 	}
+	if p.Framework != "" {
+		lines = append(lines, "Framework:  "+p.Framework)
+	}
+	if p.InDocker {
+		lines = append(lines, "Container:  Docker")
+	}
 	if !p.StartTime.IsZero() {
 		lines = append(lines, "Start time: "+p.StartTime.Format("2006-01-02 15:04:05"))
 	}
@@ -83,7 +93,11 @@ func (m Model) viewDetails() string {
 
 func (m Model) viewTable() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("TAPAS") + "\n\n")
+	title := "TAPAS"
+	if m.WatchEnabled {
+		title += "  (watch " + m.WatchInterval.String() + ")"
+	}
+	b.WriteString(titleStyle.Render(title) + "\n\n")
 
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
@@ -113,7 +127,7 @@ func (m Model) viewTable() string {
 	}
 
 	// Table header with sort indicator
-	portHdr, protoHdr, processHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "PROJECT", "UPTIME"
+	portHdr, protoHdr, processHdr, appHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "APP", "PROJECT", "UPTIME"
 	switch m.sortKey {
 	case SortByPort:
 		portHdr = "PORT \u2191"
@@ -122,16 +136,17 @@ func (m Model) viewTable() string {
 	case SortByProcess:
 		processHdr = "PROCESS \u2191"
 	}
-	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
+	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, " ", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), colApp, truncate(appHdr, colApp), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
 	b.WriteString(header + "\n")
 
-	// Rows (from display list, with color semantics)
+	// Rows (from display list, with color semantics + symbol cues)
 	for i, p := range disp {
-		row := rowLine(&p, projectCol)
+		kind := rowKindFor(&p)
+		row := rowLine(&p, projectCol, rowSymbol(kind))
 		if i == m.selected {
 			row = selectedStyle.Render(row)
 		} else {
-			row = rowStyle(&p).Render(row)
+			row = rowStyleForKind(kind).Render(row)
 		}
 		b.WriteString(row + "\n")
 	}
@@ -147,33 +162,91 @@ func (m Model) viewTable() string {
 	return b.String()
 }
 
-// rowStyle returns the semantic style for a row (long-run red, dev blue, DB purple, system muted).
-func rowStyle(p *ports.Port) lipgloss.Style {
+// rowKind is the semantic category of a port row (for style + symbol; never color alone).
+type rowKind int
+
+const (
+	kindDefault rowKind = iota
+	kindLongRun
+	kindDev
+	kindDB
+	kindSystem
+)
+
+func rowKindFor(p *ports.Port) rowKind {
 	const longRunThreshold = 24 * time.Hour
 	if p.Uptime() >= longRunThreshold {
-		return longRunStyle
+		return kindLongRun
 	}
 	switch p.PortNum {
 	case 3000, 3001, 3002, 3003, 3004, 3005:
-		return devPortStyle
-	case 5432, 6379:
-		return dbPortStyle
+		return kindDev
+	case 5432, 6379, 27017, 3306, 1433, 5984, 9200:
+		return kindDB
 	}
 	if p.PortNum < 1024 {
-		return mutedStyle
+		return kindSystem
 	}
-	return lipgloss.NewStyle() // default
+	return kindDefault
 }
 
-// rowLine formats one table row. projectCol is the width for the project column (narrow-terminal: truncate first).
-func rowLine(p *ports.Port, projectCol int) string {
+// rowSymbol returns a single-character cue for the row kind (accessibility: not color alone).
+func rowSymbol(k rowKind) string {
+	switch k {
+	case kindLongRun:
+		return "!"
+	case kindDev:
+		return "D"
+	case kindDB:
+		return "B"
+	case kindSystem:
+		return "\u00b7" // middle dot
+	default:
+		return "-"
+	}
+}
+
+func rowStyleForKind(k rowKind) lipgloss.Style {
+	switch k {
+	case kindLongRun:
+		return longRunStyle
+	case kindDev:
+		return devPortStyle
+	case kindDB:
+		return dbPortStyle
+	case kindSystem:
+		return mutedStyle
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+// appBadge returns the framework badge + Docker indicator for the APP column.
+func appBadge(p *ports.Port) string {
+	badge := p.Framework
+	if badge == "" {
+		badge = "—"
+	}
+	if p.InDocker {
+		badge += " D"
+	}
+	return truncate(badge, colApp)
+}
+
+// rowLine formats one table row. symbol is the row-kind cue (1 char). projectCol is the width for the project column.
+func rowLine(p *ports.Port, projectCol int, symbol string) string {
 	uptime := formatUptime(p.Uptime())
 	project := truncate(p.Project(), projectCol)
 	proto := truncate(strings.ToUpper(p.Protocol), colProtocol)
 	if proto == "" {
 		proto = "—"
 	}
-	return fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s", colPort, p.PortNum, colProtocol, proto, colProcess, truncate(p.Process, colProcess), projectCol, project, colUptime, uptime)
+	// First rune only (symbol is 1 char; avoid cutting multi-byte runes).
+	sym := symbol
+	if utf8.RuneCountInString(sym) > 1 {
+		sym = string([]rune(symbol)[0])
+	}
+	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(p.Process, colProcess), colApp, appBadge(p), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {

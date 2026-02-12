@@ -54,14 +54,19 @@ func parseLsof(out []byte) ([]Port, error) {
 		}
 		seen[key] = true
 		startTime, _ := processStartTime(pid)
+		workingDir := getWorkingDir(pid)
+		command := getCommand(pid)
+		process := fields[0]
 		list = append(list, Port{
-			PortNum:   uint16(port),
-			PID:       pid,
-			Process:   fields[0],
-			Protocol:  "tcp",
-			StartTime: startTime,
-			WorkingDir: getWorkingDir(pid),
-			Command:   getCommand(pid),
+			PortNum:    uint16(port),
+			PID:        pid,
+			Process:    process,
+			Protocol:   "tcp",
+			StartTime:  startTime,
+			WorkingDir: workingDir,
+			Command:    command,
+			Framework:  DetectFramework(workingDir, command, process),
+			InDocker:   isDocker(pid),
 		})
 	}
 	return list, sc.Err()
