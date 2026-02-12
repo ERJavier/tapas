@@ -72,8 +72,9 @@ func parseSS(out []byte) ([]Port, error) {
 			Command:           command,
 			Framework:         DetectFramework(workingDir, command, process),
 			InDocker:          isDocker(pid),
-			BindAddress:       bindAddr,
+			BindAddress:        bindAddr,
 			ProjectDisplayName: ProjectDisplayName(workingDir),
+			Environment:        DetectEnvironment(command),
 		})
 	}
 	return list, sc.Err()

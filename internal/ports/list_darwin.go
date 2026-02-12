@@ -79,6 +79,7 @@ func parseLsof(out []byte) ([]Port, error) {
 			InDocker:          isDocker(pid),
 			BindAddress:        bindAddr,
 			ProjectDisplayName: ProjectDisplayName(workingDir),
+			Environment:        DetectEnvironment(command),
 		})
 	}
 	return list, sc.Err()

@@ -28,6 +28,9 @@ type Port struct {
 
 	// Project display name: from package.json "name", .git repo name, or empty (use Project()).
 	ProjectDisplayName string
+
+	// Environment: how the process was launched (npm, yarn, pnpm, poetry, pipenv, cargo, go).
+	Environment string
 }
 
 // Uptime returns the duration since StartTime. If StartTime is zero, returns 0.
