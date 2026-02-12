@@ -24,7 +24,12 @@ func (l *linuxLister) List() ([]Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseSS(out)
+	list, err := parseSS(out)
+	if err != nil {
+		return nil, err
+	}
+	EnrichDocker(&list)
+	return list, nil
 }
 
 // parseSS parses ss -tlnp. Format:

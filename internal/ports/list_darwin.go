@@ -23,7 +23,12 @@ func (d *darwinLister) List() ([]Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseLsof(out)
+	list, err := parseLsof(out)
+	if err != nil {
+		return nil, err
+	}
+	EnrichDocker(&list)
+	return list, nil
 }
 
 // parseLsof parses lsof -i -P -n output. Columns: COMMAND, PID, USER, FD, TYPE, DEVICE, SIZE/OFF, NODE, NAME
