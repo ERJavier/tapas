@@ -11,6 +11,13 @@ import (
 
 const (
 	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [q] Quit"
+
+	// Column layout: keep Port, Process, Uptime; truncate Project first (UX narrow-terminal rule).
+	colPort    = 8
+	colProcess = 12
+	colUptime  = 12
+	colGaps    = 3   // spaces between columns
+	minTableW  = colPort + colProcess + colUptime + colGaps // 35; project gets the rest
 )
 
 var (
@@ -94,6 +101,16 @@ func (m Model) viewTable() string {
 		return b.String()
 	}
 
+	// Narrow-terminal: project column gets remaining width; truncate gracefully (never break layout).
+	tableWidth := m.width
+	if tableWidth <= 0 {
+		tableWidth = 80
+	}
+	projectCol := tableWidth - minTableW
+	if projectCol < 1 {
+		projectCol = 1
+	}
+
 	// Table header with sort indicator
 	portHdr, processHdr, projectHdr, uptimeHdr := "PORT", "PROCESS", "PROJECT", "UPTIME"
 	switch m.sortKey {
@@ -104,12 +121,12 @@ func (m Model) viewTable() string {
 	case SortByProcess:
 		processHdr = "PROCESS \u2191"
 	}
-	header := headerStyle.Render(fmt.Sprintf("%-8s %-12s %-10s %-12s", portHdr, processHdr, projectHdr, uptimeHdr))
+	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s", colPort, truncate(portHdr, colPort), colProcess, truncate(processHdr, colProcess), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
 	b.WriteString(header + "\n")
 
 	// Rows (from display list, with color semantics)
 	for i, p := range disp {
-		row := rowLine(&p)
+		row := rowLine(&p, projectCol)
 		if i == m.selected {
 			row = selectedStyle.Render(row)
 		} else {
@@ -147,10 +164,11 @@ func rowStyle(p *ports.Port) lipgloss.Style {
 	return lipgloss.NewStyle() // default
 }
 
-func rowLine(p *ports.Port) string {
+// rowLine formats one table row. projectCol is the width for the project column (narrow-terminal: truncate first).
+func rowLine(p *ports.Port, projectCol int) string {
 	uptime := formatUptime(p.Uptime())
-	project := truncate(p.Project(), 10)
-	return fmt.Sprintf("%-6d %-12s %-10s %-12s", p.PortNum, truncate(p.Process, 12), project, uptime)
+	project := truncate(p.Project(), projectCol)
+	return fmt.Sprintf("%-*d %-*s %-*s %-*s", colPort, p.PortNum, colProcess, truncate(p.Process, colProcess), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {
