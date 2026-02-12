@@ -17,7 +17,7 @@ const (
 	colSymbol   = 1
 	colPort     = 8
 	colProtocol = 5
-	colProcess  = 12
+	colProcess  = 45 // e.g. "Docker → my-api-container (postgres:15)" — project column truncates first on narrow terminals
 	colApp      = 10  // framework badge + Docker indicator
 	colUptime   = 12
 	colGaps     = 4
@@ -40,6 +40,7 @@ var (
 	longRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red >24h
 	devPortStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))  // blue 3000-3005
 	dbPortStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))  // magenta/purple 5432, 6379, etc.
+	dockerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // cyan Docker containers
 	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // system / privileged (muted)
 )
 
@@ -56,7 +57,7 @@ func (m Model) View() string {
 
 func (m Model) viewKillConfirm() string {
 	p := m.killTarget
-	body := fmt.Sprintf("Kill port %d (%s)?\n\n[y] Confirm   [n] Cancel", p.PortNum, p.Process)
+	body := fmt.Sprintf("Kill port %d (%s)?\n\n[y] Confirm   [n] Cancel", p.PortNum, processLabel(p))
 	if m.killResult != "" {
 		body += "\n\n" + errorStyle.Render(m.killResult)
 	}
@@ -80,7 +81,13 @@ func (m Model) viewDetails() string {
 	if p.Framework != "" {
 		lines = append(lines, "Framework:  "+p.Framework)
 	}
-	if p.InDocker {
+	if p.DockerContainerName != "" {
+		line := "Container:  Docker → " + p.DockerContainerName
+		if p.DockerImage != "" {
+			line += " (" + p.DockerImage + ")"
+		}
+		lines = append(lines, line)
+	} else if p.InDocker {
 		lines = append(lines, "Container:  Docker")
 	}
 	if !p.StartTime.IsZero() {
@@ -170,11 +177,15 @@ const (
 	kindLongRun
 	kindDev
 	kindDB
+	kindDocker
 	kindSystem
 )
 
 func rowKindFor(p *ports.Port) rowKind {
 	const longRunThreshold = 24 * time.Hour
+	if p.DockerContainerName != "" || p.InDocker {
+		return kindDocker
+	}
 	if p.Uptime() >= longRunThreshold {
 		return kindLongRun
 	}
@@ -199,6 +210,8 @@ func rowSymbol(k rowKind) string {
 		return "D"
 	case kindDB:
 		return "B"
+	case kindDocker:
+		return "C" // container
 	case kindSystem:
 		return "\u00b7" // middle dot
 	default:
@@ -214,6 +227,8 @@ func rowStyleForKind(k rowKind) lipgloss.Style {
 		return devPortStyle
 	case kindDB:
 		return dbPortStyle
+	case kindDocker:
+		return dockerStyle
 	case kindSystem:
 		return mutedStyle
 	default:
@@ -221,14 +236,42 @@ func rowStyleForKind(k rowKind) lipgloss.Style {
 	}
 }
 
+// processLabel returns the process column text: "Docker → container (image)", "Framework (process)", or process name.
+func processLabel(p *ports.Port) string {
+	if p.DockerContainerName != "" {
+		s := "Docker → " + p.DockerContainerName
+		if p.DockerImage != "" {
+			s += " (" + p.DockerImage + ")"
+		}
+		return s
+	}
+	if p.Framework != "" {
+		if p.Process != "" && p.Process != "—" {
+			return p.Framework + " (" + p.Process + ")"
+		}
+		return p.Framework
+	}
+	if p.Process == "" {
+		return "—"
+	}
+	return p.Process
+}
+
 // appBadge returns the framework badge + Docker indicator for the APP column.
 func appBadge(p *ports.Port) string {
-	badge := p.Framework
-	if badge == "" {
+	var badge string
+	if p.DockerContainerName != "" {
+		badge = "Docker"
+	} else if p.Framework != "" {
+		badge = p.Framework
+		if p.InDocker {
+			badge += " D"
+		}
+	} else {
 		badge = "—"
-	}
-	if p.InDocker {
-		badge += " D"
+		if p.InDocker {
+			badge += " D"
+		}
 	}
 	return truncate(badge, colApp)
 }
@@ -246,7 +289,7 @@ func rowLine(p *ports.Port, projectCol int, symbol string) string {
 	if utf8.RuneCountInString(sym) > 1 {
 		sym = string([]rune(symbol)[0])
 	}
-	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(p.Process, colProcess), colApp, appBadge(p), projectCol, project, colUptime, uptime)
+	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {

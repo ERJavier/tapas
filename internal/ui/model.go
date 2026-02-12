@@ -143,6 +143,12 @@ func portMatches(p ports.Port, q string) bool {
 	if p.Framework != "" && strings.Contains(strings.ToLower(p.Framework), q) {
 		return true
 	}
+	if p.DockerContainerName != "" && strings.Contains(strings.ToLower(p.DockerContainerName), q) {
+		return true
+	}
+	if p.DockerImage != "" && strings.Contains(strings.ToLower(p.DockerImage), q) {
+		return true
+	}
 	return false
 }
 

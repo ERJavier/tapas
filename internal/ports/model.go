@@ -15,6 +15,10 @@ type Port struct {
 	// v1.0 Smart Detection
 	Framework string // e.g. "Next.js", "Vite", "Rails", "Django", "Node", ""
 	InDocker  bool   // process is running inside a Docker/containerd container
+
+	// Docker awareness: from docker ps port mapping (host port -> container)
+	DockerContainerName string // e.g. "my-api-container"
+	DockerImage         string // e.g. "postgres:15"
 }
 
 // Uptime returns the duration since StartTime. If StartTime is zero, returns 0.
