@@ -76,15 +76,20 @@ type Model struct {
 	// v1.0 Watch mode: auto-refresh every WatchInterval (no heavy polling; one tick in flight).
 	WatchEnabled  bool
 	WatchInterval time.Duration
+
+	// AsciiMode: use ASCII indicators only (! public, - Docker); no Unicode ●○.
+	AsciiMode bool
 }
 
 // NewModel returns an initial model. Caller must provide a Lister (e.g. ports.DefaultLister()).
-func NewModel(lister Lister) Model {
+// ascii enables ASCII-only indicators (e.g. --ascii flag).
+func NewModel(lister Lister, ascii bool) Model {
 	return Model{
 		lister:        lister,
 		ports:         nil,
 		selected:      0,
 		WatchInterval: 5 * time.Second,
+		AsciiMode:     ascii,
 	}
 }
 
@@ -121,7 +126,7 @@ func filterAndSort(list []ports.Port, query string, sortKey SortKey) []ports.Por
 			out = append(out, p)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
 		return lessPort(out[i], out[j], sortKey)
 	})
 	return out
@@ -164,9 +169,16 @@ func lessPort(a, b ports.Port, sortKey SortKey) bool {
 		return a.PortNum < b.PortNum
 	case SortByUptime:
 		ua, ub := a.Uptime(), b.Uptime()
-		return ua < ub
+		if ua != ub {
+			return ua > ub // descending: longest uptime first
+		}
+		return a.PortNum < b.PortNum
 	case SortByProcess:
-		return strings.ToLower(a.Process) < strings.ToLower(b.Process)
+		pa, pb := strings.ToLower(a.Process), strings.ToLower(b.Process)
+		if pa != pb {
+			return pa < pb
+		}
+		return a.PortNum < b.PortNum
 	default:
 		return a.PortNum < b.PortNum
 	}

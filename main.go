@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -10,8 +11,11 @@ import (
 )
 
 func main() {
+	ascii := flag.Bool("ascii", false, "Use ASCII indicators only (! public, - Docker)")
+	flag.Parse()
+
 	lister := ports.DefaultLister()
-	m := ui.NewModel(lister)
+	m := ui.NewModel(lister, *ascii)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

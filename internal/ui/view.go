@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/javiercepeda/tapas/internal/ports"
@@ -12,9 +11,9 @@ import (
 
 const (
 	statusBar = "[k] Kill   [Enter] Details   [/] Search   [s] Sort   [r] Refresh   [w] Watch   [q] Quit"
-
+	// Legend under footer: what keys do and what table indicators mean.
 	// Column layout: symbol + Port, Protocol, Process, App, Bind, Conn, Env, Uptime; truncate Project first.
-	colSymbol   = 1
+	colSymbol   = 2 // two cells so ●/○ render reliably and don't get clipped
 	colPort     = 8
 	colProtocol = 5
 	colProcess  = 45
@@ -45,12 +44,16 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorMuted).
 			Padding(1, 2)
-	// Selected: subtle blue tint only; do not override text color (inherit terminal foreground).
-	selectedStyle = lipgloss.NewStyle().Background(colorAccent)
+	// Selected: subtle blue tint, slight bold; do not override text color (inherit terminal foreground).
+	selectedStyle = lipgloss.NewStyle().Background(colorAccent).Bold(true)
 	// Success: momentary feedback only (kill success, etc.).
 	successStyle = lipgloss.NewStyle().Foreground(colorSuccess)
-	// Public port: soft red dot only (never entire row).
+	// Public port: soft red dot only (never entire row). Indicator system: ● or ! (ASCII).
 	publicDotStyle = lipgloss.NewStyle().Foreground(colorWarning)
+	// Docker: muted circle; secondary to public. Indicator system: ○ or - (ASCII).
+	dockerDotStyle = lipgloss.NewStyle().Foreground(colorMuted)
+	// System: muted dot (port < 1024). Indicator system: ● or · (ASCII).
+	systemDotStyle = lipgloss.NewStyle().Foreground(colorMuted)
 	// Row semantics: long-run and system use default text + symbol; only system gets muted.
 	longRunStyle = lipgloss.NewStyle() // >24h: symbol "!" only, no color
 	mutedStyle   = lipgloss.NewStyle().Foreground(colorMuted) // system ports <1024
@@ -133,7 +136,7 @@ func (m Model) viewTable() string {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
 	if m.successMsg != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.successMsg) + "\n\n")
+		b.WriteString(successStyle.Render(m.successMsg) + "\n\n")
 	}
 
 	disp := m.displayPorts()
@@ -142,7 +145,7 @@ func (m Model) viewTable() string {
 		if m.searchQuery != "" {
 			b.WriteString(dimStyle.Render("No matches for \"" + m.searchQuery + "\".") + "\n")
 		}
-		b.WriteString("\n" + statusStyle.Render(statusBar))
+		b.WriteString("\n" + statusStyle.Render(statusBar) + "\n" + m.statusLegend())
 		return b.String()
 	}
 
@@ -156,43 +159,133 @@ func (m Model) viewTable() string {
 		projectCol = 1
 	}
 
-	// Table header with sort indicator
+	// Table header: bold, active sort column in accent blue
 	portHdr, protoHdr, processHdr, appHdr, bindHdr, connHdr, envHdr, projectHdr, uptimeHdr := "PORT", "PROTO", "PROCESS", "APP", "BIND", "CONN", "ENV", "PROJECT", "UPTIME"
 	switch m.sortKey {
 	case SortByPort:
 		portHdr = "PORT \u2191"
 	case SortByUptime:
-		uptimeHdr = "UPTIME \u2191"
+		uptimeHdr = "UPTIME \u2193" // descending: longest first
 	case SortByProcess:
 		processHdr = "PROCESS \u2191"
 	}
-	header := headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, " ", colPort, truncate(portHdr, colPort), colProtocol, truncate(protoHdr, colProtocol), colProcess, truncate(processHdr, colProcess), colApp, truncate(appHdr, colApp), colBind, truncate(bindHdr, colBind), colConn, truncate(connHdr, colConn), colEnv, truncate(envHdr, colEnv), projectCol, truncate(projectHdr, projectCol), colUptime, truncate(uptimeHdr, colUptime)))
-	b.WriteString(header + "\n")
+	headerParts := []string{
+		headerStyle.Render(fmt.Sprintf("%-*s", colSymbol, "")),
+		headerStyle.Render(fmt.Sprintf("%-*s", colPort, truncate(portHdr, colPort))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colProtocol, truncate(protoHdr, colProtocol))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colProcess, truncate(processHdr, colProcess))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colApp, truncate(appHdr, colApp))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colBind, truncate(bindHdr, colBind))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colConn, truncate(connHdr, colConn))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colEnv, truncate(envHdr, colEnv))),
+		headerStyle.Render(fmt.Sprintf("%-*s", projectCol, truncate(projectHdr, projectCol))),
+		headerStyle.Render(fmt.Sprintf("%-*s", colUptime, truncate(uptimeHdr, colUptime))),
+	}
+	// Apply accent to active sort column only
+	switch m.sortKey {
+	case SortByPort:
+		headerParts[1] = accentStyle.Bold(true).Render(fmt.Sprintf("%-*s", colPort, truncate(portHdr, colPort)))
+	case SortByUptime:
+		headerParts[9] = accentStyle.Bold(true).Render(fmt.Sprintf("%-*s", colUptime, truncate(uptimeHdr, colUptime)))
+	case SortByProcess:
+		headerParts[3] = accentStyle.Bold(true).Render(fmt.Sprintf("%-*s", colProcess, truncate(processHdr, colProcess)))
+	}
+	header := strings.Join(headerParts, " ") + "\n"
+	b.WriteString(header)
 
-	// Rows (from display list, with color semantics + symbol cues)
+	// Rows: indicator system — first column Docker ○/- or System ●/· (muted), right column Public ●/! (warning only).
+	// Apply row style (selection/kind) only to the middle so indicator colors are not overridden.
 	for i, p := range disp {
 		kind := rowKindFor(&p)
-		row := rowLine(&p, projectCol, rowSymbol(kind))
-		if i == m.selected {
-			row = selectedStyle.Render(row)
+		firstCol, _, isSystem := firstColumnIndicator(&p, m.AsciiMode)
+		var firstPart string
+		if firstCol == " " {
+			firstPart = "  " // fixed width so column aligns
 		} else {
-			row = rowStyleForKind(kind).Render(row)
+			style := dockerDotStyle
+			if isSystem {
+				style = systemDotStyle
+			}
+			// Pad to colSymbol width so the indicator column is stable and ●/○ don't get clipped
+			firstPart = style.Render(firstCol) + " "
 		}
-		b.WriteString(row + "\n")
+		middlePart := rowLineMiddle(&p, projectCol)
+		var publicPart string
+		if pub := publicIndicator(&p, m.AsciiMode); pub != "" {
+			publicPart = " " + publicDotStyle.Render(pub)
+		} else {
+			publicPart = " "
+		}
+		rowStyle := rowStyleForKind(kind)
+		if i == m.selected {
+			rowStyle = selectedStyle
+		}
+		b.WriteString(firstPart + rowStyle.Render(middlePart) + publicPart + "\n")
 	}
 
-	// Status bar and search prompt
+	// Footer: muted gray; only active mode (e.g. search) in accent blue
 	b.WriteString("\n")
 	if m.searchMode {
-		b.WriteString(statusStyle.Render("/ ") + statusStyle.Render(m.searchQuery) + dimStyle.Render("_") + "\n")
+		b.WriteString(accentStyle.Render("/ ") + statusStyle.Render(m.searchQuery) + dimStyle.Render("_") + "\n")
 		b.WriteString(dimStyle.Render("Esc to clear search") + "\n")
 	} else {
-		b.WriteString(statusStyle.Render(statusBar))
+		b.WriteString(statusStyle.Render(statusBar) + "\n" + m.statusLegend())
 	}
 	return b.String()
 }
 
-// rowKind is the semantic category of a port row (for style + symbol; never color alone).
+// statusLegend returns the footer legend (what table indicators mean). Muted style; symbols use indicator colors.
+func (m Model) statusLegend() string {
+	pubSym, dockSym, sysSym := indicatorPublicUnicode, indicatorDockerUnicode, indicatorSystemUnicode
+	if m.AsciiMode {
+		pubSym, dockSym, sysSym = indicatorPublicASCII, indicatorDockerASCII, indicatorSystemASCII
+	}
+	return publicDotStyle.Render(pubSym) + dimStyle.Render(" public port   ") +
+		dockerDotStyle.Render(dockSym) + dimStyle.Render(" Docker   ") +
+		systemDotStyle.Render(sysSym) + dimStyle.Render(" system")
+}
+
+// Indicator system: Public ●/!, Docker ○/-, System ●/· (muted), Local empty. Shape-first, color-second.
+
+const (
+	indicatorPublicUnicode = "\u25cf" // ●
+	indicatorPublicASCII   = "!"
+	indicatorDockerUnicode = "\u25cb" // ○
+	indicatorDockerASCII   = "-"
+	indicatorSystemUnicode = "\u25cf" // ● (muted, same shape as public)
+	indicatorSystemASCII   = "\u00b7" // · middle dot
+)
+
+// firstColumnIndicator returns the first-column char and which style to use (Docker ○, System ●, or space).
+// System (port < 1024) takes precedence so system ports are always visible; Docker is shown when in container and port >= 1024.
+func firstColumnIndicator(p *ports.Port, ascii bool) (char string, isDocker, isSystem bool) {
+	if p.PortNum < 1024 {
+		if ascii {
+			return indicatorSystemASCII, false, true
+		}
+		return indicatorSystemUnicode, false, true
+	}
+	if p.DockerContainerName != "" || p.InDocker {
+		if ascii {
+			return indicatorDockerASCII, true, false
+		}
+		return indicatorDockerUnicode, true, false
+	}
+	return " ", false, false
+}
+
+// publicIndicator returns the right-column indicator for public bind (● or ! in ASCII); empty for local.
+func publicIndicator(p *ports.Port, ascii bool) string {
+	if !isPublicBind(p.BindAddress) {
+		return ""
+	}
+	if ascii {
+		return indicatorPublicASCII
+	}
+	return indicatorPublicUnicode
+}
+
+// rowKind is the semantic category of a port row (for style only; indicators are separate).
 type rowKind int
 
 const (
@@ -222,24 +315,6 @@ func rowKindFor(p *ports.Port) rowKind {
 		return kindSystem
 	}
 	return kindDefault
-}
-
-// rowSymbol returns a single-character cue for the row kind (accessibility: not color alone).
-func rowSymbol(k rowKind) string {
-	switch k {
-	case kindLongRun:
-		return "!"
-	case kindDev:
-		return "D"
-	case kindDB:
-		return "B"
-	case kindDocker:
-		return "C" // container
-	case kindSystem:
-		return "\u00b7" // middle dot
-	default:
-		return "-"
-	}
 }
 
 func rowStyleForKind(k rowKind) lipgloss.Style {
@@ -294,6 +369,16 @@ func envLabel(env string) string {
 		return "—"
 	}
 	return env
+}
+
+// isPublicBind reports whether the bind address exposes the port publicly (0.0.0.0, *, or empty).
+func isPublicBind(addr string) bool {
+	switch addr {
+	case "0.0.0.0", "*", "":
+		return true
+	default:
+		return false
+	}
 }
 
 // bindLabel returns LOCAL, PUBLIC, or the bind address for security awareness.
@@ -351,20 +436,16 @@ func appBadge(p *ports.Port) string {
 	return truncate(badge, colApp)
 }
 
-// rowLine formats one table row. symbol is the row-kind cue (1 char). projectCol is the width for the project column.
-func rowLine(p *ports.Port, projectCol int, symbol string) string {
+// rowLineMiddle returns the row content without the first column (port through uptime). Used so we can apply row style only to this part and keep indicator colors intact.
+func rowLineMiddle(p *ports.Port, projectCol int) string {
 	uptime := formatUptime(p.Uptime())
 	project := truncate(projectLabel(p), projectCol)
 	proto := truncate(strings.ToUpper(p.Protocol), colProtocol)
 	if proto == "" {
 		proto = "—"
 	}
-	// First rune only (symbol is 1 char; avoid cutting multi-byte runes).
-	sym := symbol
-	if utf8.RuneCountInString(sym) > 1 {
-		sym = string([]rune(symbol)[0])
-	}
-	return fmt.Sprintf("%-*s %-*d %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colSymbol, sym, colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), colBind, truncate(bindLabel(p.BindAddress), colBind), colConn, connLabel(p.ConnectionCount), colEnv, truncate(envLabel(p.Environment), colEnv), projectCol, project, colUptime, uptime)
+	// Leading space aligns with the gap between symbol column and port in the header.
+	return " " + fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), colBind, truncate(bindLabel(p.BindAddress), colBind), colConn, connLabel(p.ConnectionCount), colEnv, truncate(envLabel(p.Environment), colEnv), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {
