@@ -3,6 +3,7 @@ package ports
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -24,7 +25,11 @@ func Kill(pid int) KillResult {
 	}
 	err = proc.Signal(syscall.SIGTERM)
 	if err != nil {
-		return KillResult{OK: false, Error: err.Error()}
+		msg := err.Error()
+		if strings.Contains(strings.ToLower(msg), "permission") || strings.Contains(strings.ToLower(msg), "operation not permitted") {
+			msg = "permission denied (try running TAPAS with sudo to kill system processes)"
+		}
+		return KillResult{OK: false, Error: msg}
 	}
 	return KillResult{OK: true}
 }

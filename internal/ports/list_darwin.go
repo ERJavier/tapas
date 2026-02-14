@@ -85,29 +85,27 @@ func parseLsof(out []byte) ([]Port, error) {
 	return list, sc.Err()
 }
 
-// addrPortFromLsofName parses NAME like "*:3000 (LISTEN)" or "127.0.0.1:3000 (LISTEN)". Returns (address, port, ok).
+// addrPortFromLsofName parses NAME like "*:3000 (LISTEN)", "127.0.0.1:3000 (LISTEN)", or "[::1]:5432 (LISTEN)".
+// Uses the last colon so IPv6 addresses (e.g. [::]:80, [::1]:443) are parsed correctly. Returns (address, port, ok).
 func addrPortFromLsofName(name string) (addr string, port int, ok bool) {
-	i := strings.Index(name, ":")
+	i := strings.LastIndex(name, ":")
 	if i < 0 {
 		return "", 0, false
 	}
 	addr = strings.TrimSpace(name[:i])
-	rest := name[i+1:]
-	j := strings.Index(rest, " ")
-	if j < 0 {
-		j = strings.Index(rest, ")")
-	}
-	var portStr string
-	if j >= 0 {
-		portStr = strings.TrimSpace(rest[:j])
-	} else {
-		portStr = strings.TrimSpace(rest)
+	portStr := strings.TrimSpace(name[i+1:])
+	// Ignore trailing " (LISTEN)" if present (NAME is sometimes fields[8] only, so portStr is just the number)
+	if j := strings.Index(portStr, " "); j >= 0 {
+		portStr = strings.TrimSpace(portStr[:j])
 	}
 	if portStr == "" {
 		return "", 0, false
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
+		return "", 0, false
+	}
+	if port < 1 || port > 65535 {
 		return "", 0, false
 	}
 	return addr, port, true
