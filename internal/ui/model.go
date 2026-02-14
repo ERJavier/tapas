@@ -221,19 +221,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.killTarget != nil {
 					p := m.killTarget
 					r := ports.KillPort(p.PortNum, p.PID)
-					m.showKillConfirm = false
-					m.killTarget = nil
 					if r.OK {
+						m.showKillConfirm = false
+						m.killTarget = nil
 						m.killResult = ""
 						m.successMsg = fmt.Sprintf("Port %d terminated.", p.PortNum)
 						return m, m.refreshCmd()
 					}
+					// Keep modal open so user sees the error; they can press n to close
 					m.killResult = r.Error
 					return m, nil
 				}
 			case "n", "N", "q", "esc":
 				m.showKillConfirm = false
 				m.killTarget = nil
+				// Keep killResult so main view can show it until user presses another key
 				return m, nil
 			}
 			return m, nil
@@ -271,12 +273,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.successMsg = "" // clear success message on any key
+		m.killResult = "" // clear kill error on any key
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r", "R":
 			m.err = ""
 			m.successMsg = ""
+			m.killResult = ""
 			return m, m.refreshCmd()
 		case "up":
 			disp := m.displayPorts()
@@ -298,6 +302,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "k":
 			if p := m.SelectedPort(); p != nil {
 				m.showKillConfirm = true
+				m.killResult = ""
 				dup := *p
 				m.killTarget = &dup
 			}

@@ -135,6 +135,9 @@ func (m Model) viewTable() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
+	if m.killResult != "" {
+		b.WriteString(errorStyle.Render(m.killResult) + "\n\n")
+	}
 	if m.successMsg != "" {
 		b.WriteString(successStyle.Render(m.successMsg) + "\n\n")
 	}
@@ -257,9 +260,9 @@ const (
 )
 
 // firstColumnIndicator returns the first-column char and which style to use (Docker ○, System ●, or space).
-// System (port < 1024) takes precedence so system ports are always visible; Docker is shown when in container and port >= 1024.
+// System ports (privileged range) or system processes (e.g. rapportd, sharingd) take precedence.
 func firstColumnIndicator(p *ports.Port, ascii bool) (char string, isDocker, isSystem bool) {
-	if p.PortNum < 1024 {
+	if ports.IsSystemPort(p.PortNum) || ports.IsSystemProcess(p.Process) {
 		if ascii {
 			return indicatorSystemASCII, false, true
 		}
@@ -311,7 +314,7 @@ func rowKindFor(p *ports.Port) rowKind {
 	case 5432, 6379, 27017, 3306, 1433, 5984, 9200:
 		return kindDB
 	}
-	if p.PortNum < 1024 {
+	if ports.IsSystemPort(p.PortNum) || ports.IsSystemProcess(p.Process) {
 		return kindSystem
 	}
 	return kindDefault
@@ -371,10 +374,11 @@ func envLabel(env string) string {
 	return env
 }
 
-// isPublicBind reports whether the bind address exposes the port publicly (0.0.0.0, *, or empty).
+// isPublicBind reports whether the bind address exposes the port publicly (all interfaces).
+// IPv4: 0.0.0.0, *; IPv6: ::, [::].
 func isPublicBind(addr string) bool {
 	switch addr {
-	case "0.0.0.0", "*", "":
+	case "0.0.0.0", "*", "", "::", "[::]":
 		return true
 	default:
 		return false
@@ -386,7 +390,7 @@ func bindLabel(addr string) string {
 	switch addr {
 	case "127.0.0.1", "::1":
 		return "LOCAL"
-	case "0.0.0.0", "*", "":
+	case "0.0.0.0", "*", "", "::", "[::]":
 		return "PUBLIC"
 	default:
 		return addr
@@ -417,13 +421,18 @@ func processLabel(p *ports.Port) string {
 	return p.Process
 }
 
-// appBadge returns the framework badge + Docker indicator for the APP column.
+// appBadge returns the framework badge + Docker indicator + common app name for the APP column.
 func appBadge(p *ports.Port) string {
 	var badge string
 	if p.DockerContainerName != "" {
 		badge = "Docker"
 	} else if p.Framework != "" {
 		badge = p.Framework
+		if p.InDocker {
+			badge += " D"
+		}
+	} else if app := ports.AppName(p.PortNum, p.Process); app != "" {
+		badge = app
 		if p.InDocker {
 			badge += " D"
 		}
