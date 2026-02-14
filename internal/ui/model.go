@@ -218,7 +218,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showKillConfirm {
 			switch msg.String() {
 			case "y", "Y":
-				if m.killTarget != nil {
+				if m.killTarget != nil && m.killTarget.PID > 0 {
 					p := m.killTarget
 					r := ports.KillPort(p.PortNum, p.PID)
 					if r.OK {
@@ -228,7 +228,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.successMsg = fmt.Sprintf("Port %d terminated.", p.PortNum)
 						return m, m.refreshCmd()
 					}
-					// Keep modal open so user sees the error; they can press n to close
+					m.killResult = r.Error
+					return m, nil
+				}
+			case "K", "k":
+				// k in dialog = force kill (so shift+K and k both work)
+				if m.killTarget != nil && m.killTarget.PID > 0 {
+					p := m.killTarget
+					r := ports.KillPortForce(p.PortNum, p.PID)
+					if r.OK {
+						m.showKillConfirm = false
+						m.killTarget = nil
+						m.killResult = ""
+						m.successMsg = fmt.Sprintf("Port %d force-killed.", p.PortNum)
+						return m, m.refreshCmd()
+					}
 					m.killResult = r.Error
 					return m, nil
 				}

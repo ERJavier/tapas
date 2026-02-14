@@ -74,7 +74,14 @@ func (m Model) View() string {
 
 func (m Model) viewKillConfirm() string {
 	p := m.killTarget
-	body := fmt.Sprintf("Kill port %d (%s)?\n\n[y] Confirm   [n] Cancel", p.PortNum, processLabel(p))
+	canKill := p != nil && p.PID > 0
+	if !canKill {
+		// Impossible: show muted so user sees why nothing will happen
+		body := "Cannot kill this process.\n\n(PID unknown or not permitted.)\n\n[n] Cancel"
+		content := modalStyle.Copy().BorderForeground(lipgloss.Color("#6C757D")).Render(dimStyle.Render(body))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	}
+	body := fmt.Sprintf("Kill port %d (%s)?\n\n[y] Terminate   [k] Force kill   [n] Cancel", p.PortNum, processLabel(p))
 	if m.killResult != "" {
 		body += "\n\n" + errorStyle.Render(m.killResult)
 	}
@@ -454,7 +461,7 @@ func rowLineMiddle(p *ports.Port, projectCol int) string {
 		proto = "—"
 	}
 	// Leading space aligns with the gap between symbol column and port in the header.
-	return " " + fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), colBind, truncate(bindLabel(p.BindAddress), colBind), colConn, connLabel(p.ConnectionCount), colEnv, truncate(envLabel(p.Environment), colEnv), projectCol, project, colUptime, uptime)
+	return " " + fmt.Sprintf("%-*d %-*s %-*s %-*s %-*s %-*s %-*s %-*s %-*s", colPort, p.PortNum, colProtocol, proto, colProcess, truncate(processLabel(p), colProcess), colApp, appBadge(p), colBind, truncate(bindLabel(p.BindAddress), colBind), colConn, connLabel(p.ConnectionCount), colEnv, truncate(envLabel(p.Environment), colEnv), projectCol, project, colUptime, uptime)
 }
 
 func formatUptime(d time.Duration) string {

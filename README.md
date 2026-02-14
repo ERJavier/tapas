@@ -6,17 +6,21 @@ A modern, keyboard-driven TUI for monitoring and managing listening ports. Think
 
 ## Install
 
+**From anywhere** (requires Go):
+
 ```bash
 go install github.com/javiercepeda/tapas@latest
 ```
 
-Or clone and build:
+**From the repo** (after clone):
 
 ```bash
-git clone https://github.com/javiercepeda/tapas
-cd tapas && go build -o tapas .
-./tapas
+make install
+# or
+./install.sh
 ```
+
+Then run `tapas` from any directory. The binary is installed to `$GOBIN` or `$GOPATH/bin`; ensure that directory is on your `PATH`.
 
 ## Usage
 
